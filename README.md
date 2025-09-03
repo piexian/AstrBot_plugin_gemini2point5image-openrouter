@@ -5,7 +5,9 @@
 ## 功能特点
 
 - 🎨 **免费图像生成**: 使用 OpenRouter 的免费 Gemini 2.5 Flash 模型
-- 🖼️ **参考图片支持**: 支持基于用户提供的图片进行生成或修改
+- 🔧 **自定义模型支持**: 可配置使用任何 OpenRouter 平台支持的图像生成模型
+- ️ **参考图片支持**: 支持基于用户提供的图片进行生成或修改
+- 🔑 **多API密钥支持**: 支持配置多个API密钥，自动轮换避免额度耗尽
 - 🚀 **异步处理**: 基于 asyncio 的高性能异步图像生成
 - 🔗 **智能文件传输**: 支持本地和远程服务器的文件传输
 - 🧹 **自动清理**: 自动清理超过15分钟的历史图像文件
@@ -22,7 +24,9 @@
 
 在插件配置中设置以下参数：
 
-- **openrouter_api_key**: OpenRouter API 密钥
+- **openrouter_api_keys**: OpenRouter API 密钥列表（支持多个密钥自动轮换）
+- **model_name**: 使用的模型名称（默认：google/gemini-2.5-flash-image-preview:free）
+- **custom_api_base**: 自定义 API Base URL（可选，没有特殊需求别填）
 - **nap_server_address**: NAP cat 服务地址（同服务器填写 `localhost`）
 - **nap_server_port**: 文件传输端口（默认 3658）
 
@@ -37,26 +41,10 @@
 
 ### 使用场景
 
-#### 1. 纯文本生成图像
-```python
-# 在对话中直接请求生成图像
-"帮我画一张可爱的小猫咪"
-"Generate a beautiful sunset landscape"
-"创建一个科幻风格的机器人"
-```
-
-#### 2. 基于参考图片生成/修改
-```python
-# 用户发送图片后，可以请求基于该图片进行修改
-"将这张图片改成卡通风格"
-"给这张照片添加一些梦幻效果"
-"基于这张图片创建一个类似的场景，但是改成夜晚"
-```
-
-#### 3. 智能参考控制
-插件会自动判断：
-- 如果用户消息包含图片且 `use_reference_images=True`，则使用参考图片
-- 如果没有图片或 `use_reference_images=False`，则进行纯文本生成
+插件支持以下使用场景：
+- **纯文本生成图像**: 直接通过文字描述生成图片
+- **基于参考图片生成/修改**: 上传图片后，可以基于该图片进行修改或生成新图片
+- **智能参考控制**: 插件会自动判断是否使用参考图片
 
 ## 技术实现
 
@@ -80,7 +68,15 @@
 
 ### 支持的模型
 
+插件支持配置任何 OpenRouter 平台上可用的图像生成模型，包括但不限于：
+
 - `google/gemini-2.5-flash-image-preview:free`（默认免费模型）
+- `google/gemini-2.0-flash-exp:free`
+- `openai/gpt-4o`
+- `anthropic/claude-3.5-sonnet`
+- 其他支持图像生成的 OpenRouter 模型
+
+您可以在插件的配置文件中的 `model_name` 字段指定要使用的模型。
 
 ## 文件结构
 
@@ -110,17 +106,19 @@ AstrBot_plugin_gemini2.5image-openrouter/
 
 ## 版本信息
 
-- **当前版本**: v1.1
+- **当前版本**: v1.5
 - **更新内容**:
+  - 新增自定义模型配置功能，支持配置不同的 OpenRouter 模型
+  - 优化API密钥管理，支持多个密钥自动轮换
+  - 改进错误处理和日志记录
   - 新增参考图片支持功能
   - 优化LLM工具名称为 `gemini-pic-gen`
   - 添加自动清理机制
-  - 改进错误处理和日志记录
 
 ## 开发信息
 
 - **作者**: 喵喵
-- **版本**: v1.1
+- **版本**: v1.5
 - **许可证**: 见 LICENSE 文件
 - **项目地址**: [GitHub Repository](https://github.com/miaoxutao123/AstrBot_plugin_gemini2point5image-openrouter)
 

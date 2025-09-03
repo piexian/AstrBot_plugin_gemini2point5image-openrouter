@@ -7,19 +7,26 @@
         "obvious_hint": true
     },
     "custom_api_base": {
-        "description": "自定义 API Base URL（可选）",
+        "description": "自定义 API Base URL（可选，没有特殊需求别填）",
         "type": "string",
         "hint": "自定义的 API 基础地址，如果不填写则使用默认的 OpenRouter API 地址。例如：https://api.openrouter.ai 或其他兼容的API地址",
         "default": "",
         "obvious_hint": false
     },
+    "model_name": {
+        "description": "使用的模型名称",
+        "type": "string",
+        "hint": "OpenRouter 支持的图像生成模型，例如：google/gemini-2.5-flash-image-preview:free（默认免费模型）、google/gemini-2.0-flash-exp:free、openai/gpt-4o 等",
+        "default": "google/gemini-2.5-flash-image-preview:free",
+        "obvious_hint": true
+    },
     "nap_server_address": {
-        "description": "NAP cat 服务地址,若与服务器在同一服务器上请填写localhost",
+        "description": "（没特殊需求别改，仅当nap和bot不在一个服务器时填写，需配合文件接收脚本）NAP cat 服务地址,若与服务器在同一服务器上请填写localhost",
         "type": "string",
         "default": "localhost"
     },
     "nap_server_port": {
-        "description": "NAP cat 所处服务器接收文件端口，在同一服务器上可以不填",
+        "description": "（没特殊需求别改，仅当nap和bot不在一个服务器时填写，需配合文件接收脚本）NAP cat 所处服务器接收文件端口，在同一服务器上可以不填",
         "type": "int",
         "default": 3658
     }

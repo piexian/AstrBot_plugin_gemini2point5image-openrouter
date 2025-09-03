@@ -6,7 +6,7 @@ from astrbot.core.message.components import Reply
 from .utils.ttp import generate_image_openrouter
 from .utils.file_send_server import send_file
 
-@register("gemini-25-image-openrouter", "喵喵", "使用openrouter的免费api生成图片", "1.3")
+@register("gemini-25-image-openrouter", "喵喵", "使用openrouter的免费api生成图片", "1.5")
 class MyPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -19,6 +19,9 @@ class MyPlugin(Star):
         
         # 自定义API base支持
         self.custom_api_base = config.get("custom_api_base", "").strip()
+        
+        # 模型配置
+        self.model_name = config.get("model_name", "google/gemini-2.5-flash-image-preview:free").strip()
         
         self.nap_server_address = config.get("nap_server_address")
         self.nap_server_port = config.get("nap_server_port")
@@ -142,8 +145,9 @@ class MyPlugin(Star):
         # 调用生成图像的函数
         try:
             image_url, image_path = await generate_image_openrouter(
-                image_description, 
-                openrouter_api_keys, 
+                image_description,
+                openrouter_api_keys,
+                model=self.model_name,
                 input_images=input_images,
                 api_base=self.custom_api_base if self.custom_api_base else None
             )
