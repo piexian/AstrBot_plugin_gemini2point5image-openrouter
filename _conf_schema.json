@@ -20,6 +20,13 @@
         "default": "google/gemini-2.5-flash-image-preview:free",
         "obvious_hint": true
     },
+    "max_retry_attempts": {
+        "description": "每个API密钥的最大重试次数",
+        "type": "int",
+        "hint": "当API请求失败时，每个密钥最多重试几次。设置为1表示不重试，直接切换密钥。推荐2-5次，设置过高可能导致响应时间过长",
+        "default": 3,
+        "obvious_hint": true
+    },
     "nap_server_address": {
         "description": "（没特殊需求别改，仅当nap和bot不在一个服务器时填写，需配合文件接收脚本）NAP cat 服务地址,若与服务器在同一服务器上请填写localhost",
         "type": "string",

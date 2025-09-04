@@ -182,9 +182,9 @@ async def get_saved_image_info():
     return await _state.get_saved_image_info()
 
 
-async def generate_image_openrouter(prompt, api_keys, model="google/gemini-2.5-flash-image-preview:free", max_tokens=1000, input_images=None, api_base=None):
+async def generate_image_openrouter(prompt, api_keys, model="google/gemini-2.5-flash-image-preview:free", max_tokens=1000, input_images=None, api_base=None, max_retry_attempts=3):
     """
-    Generate image using OpenRouter API with Gemini model, supports multiple API keys with automatic rotation
+    Generate image using OpenRouter API with Gemini model, supports multiple API keys with automatic rotation and retry mechanism
 
     Args:
         prompt (str): The prompt for image generation
@@ -193,6 +193,7 @@ async def generate_image_openrouter(prompt, api_keys, model="google/gemini-2.5-f
         max_tokens (int): Maximum tokens for the response
         input_images (list): List of base64 encoded input images (optional)
         api_base (str): Custom API base URL (optional, defaults to OpenRouter)
+        max_retry_attempts (int): Maximum number of retry attempts per API key (default: 3)
 
     Returns:
         tuple: (image_url, image_path) or (None, None) if failed
@@ -211,151 +212,169 @@ async def generate_image_openrouter(prompt, api_keys, model="google/gemini-2.5-f
     else:
         url = "https://openrouter.ai/api/v1/chat/completions"
     
-    # 尝试每个API密钥，直到成功或全部失败
-    max_attempts = len(api_keys)
+    # 尝试每个API密钥，对每个密钥进行重试
+    max_api_attempts = len(api_keys)
     
-    for attempt in range(max_attempts):
+    for api_attempt in range(max_api_attempts):
         try:
             current_api_key = await get_next_api_key(api_keys)
             current_index = (_state.api_key_index % len(api_keys)) + 1
-            logger.info(f"尝试使用API密钥 #{current_index}")
             
-            # 构建消息内容，支持输入图片
-            message_content = []
-            
-            # 添加文本内容
-            message_content.append({
-                "type": "text",
-                "text": f"Generate an image: {prompt}"
-            })
-            
-            # 如果有输入图片，添加到消息中
-            if input_images:
-                for base64_image in input_images:
-                    # 确保base64数据包含正确的data URI格式
-                    if not base64_image.startswith('data:image/'):
-                        # 假设是PNG格式，添加data URI前缀
-                        base64_image = f"data:image/png;base64,{base64_image}"
-                    
-                    message_content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": base64_image
-                        }
-                    })
-
-            # 为 Gemini 图像生成构建payload
-            payload = {
-                "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": message_content if len(message_content) > 1 else f"Generate an image: {prompt}"
-                    }
-                ],
-                "max_tokens": max_tokens,
-                "temperature": 0.7
-            }
-
-            headers = {
-                "Authorization": f"Bearer {current_api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/astrbot",
-                "X-Title": "AstrBot LLM Draw Plus"
-            }
-
-            # 调试输出：打印请求结构
-            logger.debug(f"模型: {model}")
-            logger.debug(f"输入图片数量: {len(input_images) if input_images else 0}")
-            if input_images:
-                logger.debug(f"第一张图片base64长度: {len(input_images[0])}")
-            logger.debug(f"消息内容结构: {type(payload['messages'][0]['content'])}")
-            if isinstance(payload['messages'][0]['content'], list):
-                content_types = [item.get('type', 'unknown') for item in payload['messages'][0]['content']]
-                logger.debug(f"消息内容类型: {content_types}")
-
-            timeout = aiohttp.ClientTimeout(total=60)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, json=payload, headers=headers) as response:
-                    data = await response.json()
-                    
-                    logger.debug(f"API响应状态: {response.status}")
-                    logger.debug(f"响应数据键: {list(data.keys()) if isinstance(data, dict) else 'Not dict'}")
-
-                    if response.status == 200 and "choices" in data:
-                        choice = data["choices"][0]
-                        message = choice["message"]
-                        content = message["content"]
-
-                        # 检查 Gemini 标准的 message.images 字段
-                        if "images" in message and message["images"]:
-                            logger.info(f"Gemini 返回了 {len(message['images'])} 个图像")
-
-                            for i, image_item in enumerate(message["images"]):
-                                if "image_url" in image_item and "url" in image_item["image_url"]:
-                                    image_url = image_item["image_url"]["url"]
-
-                                    # 检查是否是 base64 格式
-                                    if image_url.startswith("data:image/"):
-                                        try:
-                                            # 解析 data URI: data:image/png;base64,iVBORw0KGg...
-                                            header, base64_data = image_url.split(",", 1)
-                                            image_format = header.split("/")[1].split(";")[0]
-
-                                            if await save_base64_image(base64_data, image_format):
-                                                return await get_saved_image_info()
-
-                                        except Exception as e:
-                                            logger.warning(f"解析图像 {i+1} 失败: {e}")
-                                            continue
-
-                        # 如果没有找到标准images字段，尝试在content中查找
-                        elif isinstance(content, str):
-                            # 查找内联的 base64 图像数据
-                            base64_pattern = r"data:image/([^;]+);base64,([A-Za-z0-9+/=]+)"
-                            matches = re.findall(base64_pattern, content)
-
-                            if matches:
-                                image_format, base64_string = matches[0]
-                                if await save_base64_image(base64_string, image_format):
-                                    return await get_saved_image_info()
-
-                        logger.info("API调用成功，但未找到图像数据")
-                        return None, None
-
-                    elif response.status == 429 or (response.status == 402 and "insufficient" in str(data).lower()):
-                        # 额度耗尽或速率限制，尝试下一个密钥
-                        error_msg = data.get("error", {}).get("message", f"HTTP {response.status}")
-                        logger.warning(f"API密钥 #{current_index} 额度耗尽或速率限制: {error_msg}")
-                        
-                        if attempt < max_attempts - 1:  # 如果还有其他密钥可以尝试
-                            await rotate_to_next_api_key(api_keys)
-                            continue
-                        else:
-                            logger.error("所有API密钥都已达到限制")
-                            return None, None
+            # 对当前API密钥进行多次重试
+            for retry_attempt in range(max_retry_attempts):
+                try:
+                    if retry_attempt > 0:
+                        # 重试时的延迟，指数退避
+                        delay = min(2 ** retry_attempt, 10)
+                        logger.info(f"API密钥 #{current_index} 重试 {retry_attempt + 1}/{max_retry_attempts}，等待 {delay} 秒...")
+                        await asyncio.sleep(delay)
                     else:
-                        error_msg = data.get("error", {}).get("message", f"HTTP {response.status}")
-                        logger.error(f"OpenRouter API 错误: {error_msg}")
-                        if "error" in data:
-                            logger.debug(f"完整错误信息: {data['error']}")
-                        return None, None
+                        logger.info(f"尝试使用API密钥 #{current_index}")
+                    
+                    # 构建消息内容，支持输入图片
+                    message_content = []
+                    
+                    # 添加文本内容
+                    message_content.append({
+                        "type": "text",
+                        "text": f"Generate an image: {prompt}"
+                    })
+                    
+                    # 如果有输入图片，添加到消息中
+                    if input_images:
+                        for base64_image in input_images:
+                            # 确保base64数据包含正确的data URI格式
+                            if not base64_image.startswith('data:image/'):
+                                # 假设是PNG格式，添加data URI前缀
+                                base64_image = f"data:image/png;base64,{base64_image}"
+                            
+                            message_content.append({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": base64_image
+                                }
+                            })
 
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            logger.warning(f"网络请求失败 (密钥 #{current_index}): {str(e)}")
-            if attempt < max_attempts - 1:
-                await rotate_to_next_api_key(api_keys)
-                continue
-            else:
-                return None, None
+                    # 为 Gemini 图像生成构建payload
+                    payload = {
+                        "model": model,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": message_content if len(message_content) > 1 else f"Generate an image: {prompt}"
+                            }
+                        ],
+                        "max_tokens": max_tokens,
+                        "temperature": 0.7
+                    }
+
+                    headers = {
+                        "Authorization": f"Bearer {current_api_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://github.com/astrbot",
+                        "X-Title": "AstrBot LLM Draw Plus"
+                    }
+
+                    # 调试输出：打印请求结构
+                    if retry_attempt == 0:  # 只在第一次尝试时打印调试信息
+                        logger.debug(f"模型: {model}")
+                        logger.debug(f"输入图片数量: {len(input_images) if input_images else 0}")
+                        if input_images:
+                            logger.debug(f"第一张图片base64长度: {len(input_images[0])}")
+                        logger.debug(f"消息内容结构: {type(payload['messages'][0]['content'])}")
+                        if isinstance(payload['messages'][0]['content'], list):
+                            content_types = [item.get('type', 'unknown') for item in payload['messages'][0]['content']]
+                            logger.debug(f"消息内容类型: {content_types}")
+
+                    timeout = aiohttp.ClientTimeout(total=60)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.post(url, json=payload, headers=headers) as response:
+                            data = await response.json()
+                            
+                            if retry_attempt == 0:  # 只在第一次尝试时打印详细调试信息
+                                logger.debug(f"API响应状态: {response.status}")
+                                logger.debug(f"响应数据键: {list(data.keys()) if isinstance(data, dict) else 'Not dict'}")
+
+                            if response.status == 200 and "choices" in data:
+                                choice = data["choices"][0]
+                                message = choice["message"]
+                                content = message["content"]
+
+                                # 检查 Gemini 标准的 message.images 字段
+                                if "images" in message and message["images"]:
+                                    logger.info(f"Gemini 返回了 {len(message['images'])} 个图像")
+
+                                    for i, image_item in enumerate(message["images"]):
+                                        if "image_url" in image_item and "url" in image_item["image_url"]:
+                                            image_url = image_item["image_url"]["url"]
+
+                                            # 检查是否是 base64 格式
+                                            if image_url.startswith("data:image/"):
+                                                try:
+                                                    # 解析 data URI: data:image/png;base64,iVBORw0KGg...
+                                                    header, base64_data = image_url.split(",", 1)
+                                                    image_format = header.split("/")[1].split(";")[0]
+
+                                                    if await save_base64_image(base64_data, image_format):
+                                                        logger.info(f"API密钥 #{current_index} 成功生成图像")
+                                                        return await get_saved_image_info()
+
+                                                except Exception as e:
+                                                    logger.warning(f"解析图像 {i+1} 失败: {e}")
+                                                    continue
+
+                                # 如果没有找到标准images字段，尝试在content中查找
+                                elif isinstance(content, str):
+                                    # 查找内联的 base64 图像数据
+                                    base64_pattern = r"data:image/([^;]+);base64,([A-Za-z0-9+/=]+)"
+                                    matches = re.findall(base64_pattern, content)
+
+                                    if matches:
+                                        image_format, base64_string = matches[0]
+                                        if await save_base64_image(base64_string, image_format):
+                                            logger.info(f"API密钥 #{current_index} 成功生成图像")
+                                            return await get_saved_image_info()
+
+                                logger.info("API调用成功，但未找到图像数据")
+                                # 这种情况也算成功，不需要重试
+                                return None, None
+
+                            elif response.status == 429 or (response.status == 402 and "insufficient" in str(data).lower()):
+                                # 额度耗尽或速率限制，直接尝试下一个密钥，不进行重试
+                                error_msg = data.get("error", {}).get("message", f"HTTP {response.status}")
+                                logger.warning(f"API密钥 #{current_index} 额度耗尽或速率限制: {error_msg}")
+                                break  # 跳出重试循环，尝试下一个API密钥
+                            else:
+                                # 其他错误，可以重试
+                                error_msg = data.get("error", {}).get("message", f"HTTP {response.status}")
+                                logger.warning(f"OpenRouter API 错误 (重试 {retry_attempt + 1}/{max_retry_attempts}): {error_msg}")
+                                if "error" in data:
+                                    logger.debug(f"完整错误信息: {data['error']}")
+                                
+                                if retry_attempt == max_retry_attempts - 1:
+                                    logger.error(f"API密钥 #{current_index} 达到最大重试次数")
+                                    break  # 跳出重试循环，尝试下一个API密钥
+
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    logger.warning(f"网络请求失败 (密钥 #{current_index}, 重试 {retry_attempt + 1}/{max_retry_attempts}): {str(e)}")
+                    if retry_attempt == max_retry_attempts - 1:
+                        logger.error(f"API密钥 #{current_index} 网络连接达到最大重试次数")
+                        break  # 跳出重试循环，尝试下一个API密钥
+                except Exception as e:
+                    logger.error(f"调用 OpenRouter API 时发生异常 (密钥 #{current_index}, 重试 {retry_attempt + 1}/{max_retry_attempts}): {str(e)}")
+                    if retry_attempt == max_retry_attempts - 1:
+                        logger.error(f"API密钥 #{current_index} 异常达到最大重试次数")
+                        break  # 跳出重试循环，尝试下一个API密钥
+        
         except Exception as e:
-            logger.error(f"调用 OpenRouter API 时发生异常 (密钥 #{current_index}): {str(e)}")
-            if attempt < max_attempts - 1:
-                await rotate_to_next_api_key(api_keys)
-                continue
-            else:
-                return None, None
+            logger.error(f"处理API密钥 #{current_index} 时发生异常: {str(e)}")
+        
+        # 尝试下一个API密钥
+        if api_attempt < max_api_attempts - 1:
+            await rotate_to_next_api_key(api_keys)
+            logger.info(f"切换到下一个API密钥")
     
+    logger.error("所有API密钥和重试次数已耗尽")
     return None, None
 
 
