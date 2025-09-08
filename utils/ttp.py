@@ -206,9 +206,12 @@ async def generate_image_openrouter(prompt, api_keys, model="google/gemini-2.5-f
         logger.error("未提供API密钥")
         return None, None
     
-    # 支持自定义API base
+    # 支持自定义API base，根据模型类型选择不同的端点
     if api_base:
-        url = f"{api_base.rstrip('/')}/v1/chat/completions"
+        if "nano-banana" in model.lower():
+            url = f"{api_base.rstrip('/')}/v1/images/generations"
+        else:
+            url = f"{api_base.rstrip('/')}/v1/chat/completions"
     else:
         url = "https://openrouter.ai/api/v1/chat/completions"
     
@@ -255,18 +258,28 @@ async def generate_image_openrouter(prompt, api_keys, model="google/gemini-2.5-f
                                 }
                             })
 
-                    # 为 Gemini 图像生成构建payload
-                    payload = {
-                        "model": model,
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": message_content if len(message_content) > 1 else f"Generate an image: {prompt}"
-                            }
-                        ],
-                        "max_tokens": max_tokens,
-                        "temperature": 0.7
-                    }
+                    # 根据模型类型构建不同的payload
+                    if "nano-banana" in model.lower():
+                        # nano-banana使用OpenAI图像生成格式
+                        payload = {
+                            "model": model,
+                            "prompt": prompt,
+                            "n": 1,
+                            "size": "1024x1024"
+                        }
+                    else:
+                        # Gemini 图像生成构建payload
+                        payload = {
+                            "model": model,
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": message_content if len(message_content) > 1 else f"Generate an image: {prompt}"
+                                }
+                            ],
+                            "max_tokens": max_tokens,
+                            "temperature": 0.7
+                        }
 
                     headers = {
                         "Authorization": f"Bearer {current_api_key}",
@@ -295,45 +308,93 @@ async def generate_image_openrouter(prompt, api_keys, model="google/gemini-2.5-f
                                 logger.debug(f"API响应状态: {response.status}")
                                 logger.debug(f"响应数据键: {list(data.keys()) if isinstance(data, dict) else 'Not dict'}")
 
-                            if response.status == 200 and "choices" in data:
-                                choice = data["choices"][0]
-                                message = choice["message"]
-                                content = message["content"]
+                            if response.status == 200:
+                                # 处理OpenAI格式的图像生成响应 (nano-banana等)
+                                if "data" in data and data["data"]:
+                                    logger.info(f"收到 {len(data['data'])} 个图像")
+                                    
+                                    for i, image_item in enumerate(data["data"]):
+                                        if "url" in image_item:
+                                            # 直接URL格式
+                                            image_url = image_item["url"]
+                                            
+                                            # 下载图像并保存
+                                            async with session.get(image_url) as img_response:
+                                                if img_response.status == 200:
+                                                    # 生成唯一文件名
+                                                    script_dir = Path(__file__).parent.parent
+                                                    images_dir = script_dir / "images"
+                                                    images_dir.mkdir(exist_ok=True)
+                                                    
+                                                    # 先清理旧图像
+                                                    await cleanup_old_images(script_dir)
+                                                    
+                                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                                    unique_id = str(uuid.uuid4())[:8]
+                                                    image_path = images_dir / f"openai_image_{timestamp}_{unique_id}.png"
+                                                    
+                                                    async with aiofiles.open(image_path, "wb") as f:
+                                                        await f.write(await img_response.read())
+                                                    
+                                                    # 获取绝对路径
+                                                    abs_path = str(image_path.absolute())
+                                                    file_url = f"file://{abs_path}"
+                                                    
+                                                    # 更新状态
+                                                    await _state.update_saved_image(file_url, str(image_path))
+                                                    
+                                                    logger.info(f"API密钥 #{current_index} 成功生成图像: {abs_path}")
+                                                    return file_url, str(image_path)
+                                                else:
+                                                    logger.error(f"下载图像失败: {image_url}")
+                                        
+                                        elif "b64_json" in image_item:
+                                            # Base64格式
+                                            base64_data = image_item["b64_json"]
+                                            if await save_base64_image(base64_data, "png"):
+                                                logger.info(f"API密钥 #{current_index} 成功生成图像 (base64格式)")
+                                                return await get_saved_image_info()
+                                
+                                # 处理Gemini格式的响应
+                                elif "choices" in data:
+                                    choice = data["choices"][0]
+                                    message = choice["message"]
+                                    content = message["content"]
 
-                                # 检查 Gemini 标准的 message.images 字段
-                                if "images" in message and message["images"]:
-                                    logger.info(f"Gemini 返回了 {len(message['images'])} 个图像")
+                                    # 检查 Gemini 标准的 message.images 字段
+                                    if "images" in message and message["images"]:
+                                        logger.info(f"Gemini 返回了 {len(message['images'])} 个图像")
 
-                                    for i, image_item in enumerate(message["images"]):
-                                        if "image_url" in image_item and "url" in image_item["image_url"]:
-                                            image_url = image_item["image_url"]["url"]
+                                        for i, image_item in enumerate(message["images"]):
+                                            if "image_url" in image_item and "url" in image_item["image_url"]:
+                                                image_url = image_item["image_url"]["url"]
 
-                                            # 检查是否是 base64 格式
-                                            if image_url.startswith("data:image/"):
-                                                try:
-                                                    # 解析 data URI: data:image/png;base64,iVBORw0KGg...
-                                                    header, base64_data = image_url.split(",", 1)
-                                                    image_format = header.split("/")[1].split(";")[0]
+                                                # 检查是否是 base64 格式
+                                                if image_url.startswith("data:image/"):
+                                                    try:
+                                                        # 解析 data URI: data:image/png;base64,iVBORw0KGg...
+                                                        header, base64_data = image_url.split(",", 1)
+                                                        image_format = header.split("/")[1].split(";")[0]
 
-                                                    if await save_base64_image(base64_data, image_format):
-                                                        logger.info(f"API密钥 #{current_index} 成功生成图像")
-                                                        return await get_saved_image_info()
+                                                        if await save_base64_image(base64_data, image_format):
+                                                            logger.info(f"API密钥 #{current_index} 成功生成图像")
+                                                            return await get_saved_image_info()
 
-                                                except Exception as e:
-                                                    logger.warning(f"解析图像 {i+1} 失败: {e}")
-                                                    continue
+                                                    except Exception as e:
+                                                        logger.warning(f"解析图像 {i+1} 失败: {e}")
+                                                        continue
 
-                                # 如果没有找到标准images字段，尝试在content中查找
-                                elif isinstance(content, str):
-                                    # 查找内联的 base64 图像数据
-                                    base64_pattern = r"data:image/([^;]+);base64,([A-Za-z0-9+/=]+)"
-                                    matches = re.findall(base64_pattern, content)
+                                    # 如果没有找到标准images字段，尝试在content中查找
+                                    elif isinstance(content, str):
+                                        # 查找内联的 base64 图像数据
+                                        base64_pattern = r"data:image/([^;]+);base64,([A-Za-z0-9+/=]+)"
+                                        matches = re.findall(base64_pattern, content)
 
-                                    if matches:
-                                        image_format, base64_string = matches[0]
-                                        if await save_base64_image(base64_string, image_format):
-                                            logger.info(f"API密钥 #{current_index} 成功生成图像")
-                                            return await get_saved_image_info()
+                                        if matches:
+                                            image_format, base64_string = matches[0]
+                                            if await save_base64_image(base64_string, image_format):
+                                                logger.info(f"API密钥 #{current_index} 成功生成图像")
+                                                return await get_saved_image_info()
 
                                 logger.info("API调用成功，但未找到图像数据")
                                 # 这种情况也算成功，不需要重试
@@ -481,12 +542,36 @@ if __name__ == "__main__":
         return base64.b64encode(image_bytes).decode()
 
     async def main():
-        logger.info("测试 OpenRouter Gemini 图像生成...")
+        logger.info("测试图像生成功能...")
+        
+        # 测试nano-banana模型
+        logger.info("\n=== 测试nano-banana模型 ===")
+        nano_banana_api_key = "sk-6Fr314NILmqthjOw9a1AwdLKH987mOBKqqDfpq1Yb26xlIdK"
+        nano_banana_prompt = "一只可爱的小猫咪在花园里玩耍，卡通风格"
+        
+        try:
+            image_url, image_path = await generate_image_openrouter(
+                nano_banana_prompt,
+                [nano_banana_api_key],
+                model="nano-banana",
+                api_base="https://newapi502.087654.xyz"
+            )
+            
+            if image_url and image_path:
+                logger.info("nano-banana图像生成成功!")
+                logger.info(f"文件路径: {image_path}")
+            else:
+                logger.error("nano-banana图像生成失败")
+        except Exception as e:
+            logger.error(f"nano-banana测试过程出错: {e}")
+        
+        # 测试OpenRouter Gemini
+        logger.info("\n=== 测试 OpenRouter Gemini 图像生成 ===")
         # 从环境变量读取API密钥
         openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
         
         if not openrouter_api_key:
-            logger.error("请设置环境变量 OPENROUTER_API_KEY")
+            logger.warning("未设置环境变量 OPENROUTER_API_KEY，跳过OpenRouter测试")
             return
 
         logger.info("\n=== 测试1: 先生成一张图片 ===")
