@@ -6,7 +6,7 @@ from astrbot.core.message.components import Reply
 from .utils.ttp import generate_image_openrouter
 from .utils.file_send_server import send_file
 
-@register("gemini-25-image-openrouter", "喵喵", "使用openrouter的免费api生成图片", "1.7")
+@register("gemini-25-image-openrouter", "喵喵", "使用openrouter的免费api生成图片", "1.8")
 class MyPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -279,3 +279,105 @@ class MyPlugin(Star):
                 yield event.plain_result(f"已临时切换模型到: {new_model}（保存全局配置失败: {str(e)}）")
         else:
             yield event.plain_result(f"已临时切换模型到: {new_model}（会话级别，重启后恢复）")
+
+    @filter.command("手办化")
+    async def figure_transform(self, event: AstrMessageEvent):
+        """将用户提供的图片转换为手办效果
+        
+        使用方法：发送图片并使用 /手办化 指令
+        """
+        # 加载全局配置，确保使用最新的配置
+        await self._load_global_config()
+        
+        # 检查消息中是否包含图片
+        input_images = []
+        if hasattr(event, 'message_obj') and event.message_obj and hasattr(event.message_obj, 'message'):
+            for comp in event.message_obj.message:
+                if isinstance(comp, Image):
+                    try:
+                        base64_data = await comp.convert_to_base64()
+                        input_images.append(base64_data)
+                    except (IOError, ValueError, OSError) as e:
+                        logger.warning(f"转换图片到base64失败: {e}")
+                    except Exception as e:
+                        logger.error(f"处理图片时出现未预期的错误: {e}")
+                elif isinstance(comp, Reply):
+                    # 处理引用消息中的图片
+                    if comp.chain:
+                        for reply_comp in comp.chain:
+                            if isinstance(reply_comp, Image):
+                                try:
+                                    base64_data = await reply_comp.convert_to_base64()
+                                    input_images.append(base64_data)
+                                    logger.info(f"从引用消息中获取到图片")
+                                except (IOError, ValueError, OSError) as e:
+                                    logger.warning(f"转换引用消息中的图片到base64失败: {e}")
+                                except Exception as e:
+                                    logger.error(f"处理引用消息中的图片时出现未预期的错误: {e}")
+        
+        # 检查是否找到图片
+        if not input_images:
+            yield event.plain_result("请提供一张图片以进行手办化处理！\n发送图片后使用 /手办化 指令，或者回复包含图片的消息并使用 /手办化 指令。")
+            return
+        
+        logger.info(f"开始手办化处理，使用了 {len(input_images)} 张图片")
+        
+        # 使用专门的手办化提示词
+        figure_prompt = """Please accurately transform the main subject in this image into a realistic, masterpiece-quality 1/7 scale PVC figure.
+
+Specific Requirements:
+1. **Figure Creation**: Convert the subject into a high-quality PVC figure with obvious three-dimensional depth and the characteristic glossy finish of PVC material
+2. **Packaging Box Design**: Place an exquisite packaging box beside the figure. The front of the box should have a large transparent window displaying the original image, along with brand logos, product name, barcode, and detailed specification panels
+3. **Display Base**: The figure should be placed on a round, transparent plastic base with visible thickness
+4. **Background Setup**: Place a computer monitor in the background, with the screen displaying the ZBrush 3D modeling process of this figure
+5. **Indoor Scene**: Set the entire scene in an indoor environment with appropriate lighting effects
+
+Technical Requirements:
+- Maintain the exact characteristics, expressions, and poses from the original image
+- The figure must have obvious three-dimensional effects and must never appear flat
+- PVC material texture should be clearly visible and realistic
+- Avoid any cartoon outline strokes
+- If the original image is not full-body, complete it as a full-body figure
+- Character proportions should be natural and coordinated (head not too large, legs not too short)
+- For animal figures, reduce fur realism to make it more statue-like rather than the real creature
+- Pay attention to perspective relationships with near objects appearing larger and distant objects smaller
+- No outer outline lines should be present
+
+Please ensure the final result looks like a real commercial figure product that could exist in the market."""
+
+        try:
+            image_url, image_path = await generate_image_openrouter(
+                figure_prompt,
+                self.openrouter_api_keys,
+                model=self.model_name,
+                input_images=input_images,
+                api_base=self.custom_api_base if self.custom_api_base else None,
+                max_retry_attempts=self.max_retry_attempts
+            )
+            
+            if not image_url or not image_path:
+                error_chain = [Plain("手办化处理失败，请检查API配置和网络连接。")]
+                yield event.chain_result(error_chain)
+                return
+            
+            # 处理文件传输和图片发送
+            if self.nap_server_address and self.nap_server_address != "localhost":
+                image_path = await send_file(image_path, HOST=self.nap_server_address, PORT=self.nap_server_port)
+            
+            # 发送处理结果
+            image_component = await self.send_image_with_callback_api(image_path)
+            result_chain = [Plain("✨ 手办化处理完成！"), image_component]
+            yield event.chain_result(result_chain)
+            
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"网络连接错误导致手办化处理失败: {e}")
+            error_chain = [Plain(f"网络连接错误，手办化处理失败: {str(e)}")]
+            yield event.chain_result(error_chain)
+        except ValueError as e:
+            logger.error(f"参数错误导致手办化处理失败: {e}")
+            error_chain = [Plain(f"参数错误，手办化处理失败: {str(e)}")]
+            yield event.chain_result(error_chain)
+        except Exception as e:
+            logger.error(f"手办化处理过程出现未预期的错误: {e}")
+            error_chain = [Plain(f"手办化处理失败: {str(e)}")]
+            yield event.chain_result(error_chain)
