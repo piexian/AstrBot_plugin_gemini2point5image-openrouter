@@ -86,7 +86,7 @@ class MyPlugin(Star):
             return Image.fromFileSystem(image_path)
 
     @llm_tool(name="gemini-pic-gen")
-    async def pic_gen(self, event: AstrMessageEvent, image_description: str, use_reference_images: bool = True):
+    async def gemini-pic-gen(self, event: AstrMessageEvent, image_description: str, use_reference_images: bool = True):
         """
             Generate or modify images using the Gemini model via the OpenRouter API.
             When a user requests image generation or drawing, call this function.
