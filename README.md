@@ -132,7 +132,7 @@ AstrBot_plugin_gemini2.5image-openrouter/
 
 ## 版本信息
 
-- **当前版本**: v1.6
+- **当前版本**: v1.8.1
 - **更新内容**:
   - ✨ 新增智能重试机制，支持用户可配置的重试次数
   - 🔧 添加Web界面可视化配置支持
@@ -149,7 +149,7 @@ AstrBot_plugin_gemini2.5image-openrouter/
 ## 开发信息
 
 - **作者**: 喵喵
-- **版本**: v1.5
+- **版本**: v1.8.1
 - **许可证**: 见 LICENSE 文件
 - **项目地址**: [GitHub Repository](https://github.com/miaoxutao123/AstrBot_plugin_gemini2point5image-openrouter)
 
