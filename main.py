@@ -122,8 +122,8 @@ class MyPlugin(Star):
             Please pay attention to the perspective relationship of near objects appearing larger and far objects smaller."
 
         Args:
-            image_description(string): 图像描述文本；若工具漏传，会从 kwargs 或消息兜底。
-            use_reference_images(string): 是否使用上下文参考图，传 true/false（默认 true）。
+            image_description (string): Image description text; if the tool fails to provide it, it will be taken from kwargs or the message as a fallback.
+            use_reference_images (string): Whether to use contextual reference images; pass true/false (default true).
         """
         use_reference = str(use_reference_images).lower() in {"true", "1", "yes", "y"}
 
